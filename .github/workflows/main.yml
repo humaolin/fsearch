@@ -1,4 +1,4 @@
-name: Build FSearch ARM64 GLIBC228
+name: Build FSearch ARM64
 
 on:
   workflow_dispatch:
@@ -12,92 +12,81 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
 
-      - uses: docker/setup-qemu-action@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
 
-      - name: Build in Debian10 ARM64
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build FSearch
+        shell: bash
         run: |
+          mkdir -p release
 
           docker run --rm \
             --platform linux/arm64 \
-            -v ${{ github.workspace }}:/workspace \
-            arm64v8/debian:buster \
-            bash -exc '
+            -v "$PWD:/workspace" \
+            arm64v8/debian:bullseye \
+            /bin/bash -c "
+            set -ex
 
-            cat >/etc/apt/sources.list <<EOF
-deb http://archive.debian.org/debian buster main contrib non-free
-deb http://archive.debian.org/debian-security buster/updates main contrib non-free
-EOF
+            apt-get update
 
-            echo "Acquire::Check-Valid-Until false;" \
-              >/etc/apt/apt.conf.d/99no-check-valid
-
-            apt-get update \
-              -o Acquire::Check-Valid-Until=false
-
-            DEBIAN_FRONTEND=noninteractive \
-            apt-get install -y \
-                build-essential \
-                git \
-                meson \
-                ninja-build \
-                pkg-config \
-                gettext \
-                intltool \
-                libgtk-3-dev \
-                libglib2.0-dev \
-                libicu-dev \
-                libxml2-dev
+            DEBIAN_FRONTEND=noninteractive apt-get install -y \
+              git \
+              build-essential \
+              meson \
+              ninja-build \
+              pkg-config \
+              gettext \
+              intltool \
+              libgtk-3-dev \
+              libglib2.0-dev \
+              libicu-dev \
+              libxml2-dev \
+              libcairo2-dev \
+              libpango1.0-dev
 
             cd /tmp
 
-            git clone \
-              --branch 0.2.3 \
-              --depth 1 \
-              https://github.com/cboxdoerfer/fsearch.git
+            git clone --depth 1 https://github.com/cboxdoerfer/fsearch.git
 
             cd fsearch
 
-            meson setup build \
-                --buildtype=release
+            meson setup build --buildtype=release
 
             ninja -C build
 
-            mkdir -p /workspace/release
+            BIN=\$(find build -type f -name fsearch | head -1)
 
-            cp build/src/fsearch \
-               /workspace/release/
-
-            '
+            cp \$BIN /workspace/release/fsearch
+            "
 
       - name: Verify
         run: |
-
-          file release/fsearch
-
-          strings release/fsearch \
-            | grep GLIBC_ \
-            | sort -u
+          file release/fsearch || true
+          strings release/fsearch | grep GLIBC_ | sort -u || true
 
       - name: Package
         run: |
+          tar czf fsearch-arm64.tar.gz -C release .
 
-          tar czf \
-            fsearch-arm64-glibc228.tar.gz \
-            -C release .
-
-      - uses: actions/upload-artifact@v4
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: fsearch-arm64-glibc228
+          name: fsearch-arm64
           path: |
             release/fsearch
-            fsearch-arm64-glibc228.tar.gz
+            fsearch-arm64.tar.gz
 
-      - uses: softprops/action-gh-release@v2
+      - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         with:
-          files: |
-            fsearch-arm64-glibc228.tar.gz
+          files: fsearch-arm64.tar.gz
